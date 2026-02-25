@@ -43,7 +43,7 @@ All status messages are ephemeral (only you see them). The replayed messages are
 ### 2. Install and run
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/discord-thread-weaver.git
+git clone https://github.com/seblindfors/discord-thread-weaver.git
 cd discord-thread-weaver
 python3 -m venv venv
 source venv/bin/activate
