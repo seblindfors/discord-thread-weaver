@@ -13,6 +13,7 @@ from merge import (
     get_or_create_webhook,
     merge_posts,
     parse_thread_ref,
+    redirect_post,
     validate_threads,
 )
 
@@ -168,6 +169,99 @@ async def merge_command(
         await interaction.followup.send(f"**Error:** {exc}")
     except discord.HTTPException as exc:
         logger.exception("Discord API error during merge")
+        await interaction.followup.send(
+            f"**Discord API error:** {exc.text} (code {exc.code})"
+        )
+
+
+@client.tree.command(name="redirect", description="Close a duplicate post and tag its users into another")
+@app_commands.describe(
+    target="Target post — link or ID (omit to use current thread)",
+    source="Duplicate post — link or ID (will be deleted)",
+)
+async def redirect_command(
+    interaction: discord.Interaction,
+    source: str,
+    target: Optional[str] = None,
+):
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "This command can only be used in a server.", ephemeral=True
+        )
+        return
+
+    if not interaction.permissions.manage_threads:
+        await interaction.response.send_message(
+            "You need the **Manage Threads** permission to use this command.",
+            ephemeral=True,
+        )
+        return
+
+    bot_perms = interaction.app_permissions
+    missing = []
+    if not bot_perms.manage_threads:
+        missing.append("Manage Threads")
+    if not bot_perms.send_messages:
+        missing.append("Send Messages")
+    if not bot_perms.read_message_history:
+        missing.append("Read Message History")
+    if missing:
+        await interaction.response.send_message(
+            f"I'm missing permissions: **{', '.join(missing)}**. "
+            "Please fix my role and try again.",
+            ephemeral=True,
+        )
+        return
+
+    try:
+        if target is not None:
+            target_id = parse_thread_ref(target)
+        else:
+            if isinstance(
+                getattr(interaction.channel, "parent", None), discord.ForumChannel
+            ):
+                target_id = interaction.channel.id
+            else:
+                await interaction.response.send_message(
+                    "When omitting `target`, run this command inside a forum post.\n"
+                    "Or provide both: `/redirect target:<link> source:<link>`",
+                    ephemeral=True,
+                )
+                return
+
+        source_id = parse_thread_ref(source)
+    except ValueError as exc:
+        await interaction.response.send_message(
+            f"**Error:** {exc}", ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        target_thread, source_thread = await validate_threads(
+            interaction.guild, target_id, source_id
+        )
+
+        async def progress_callback(text: str):
+            try:
+                await interaction.edit_original_response(content=text)
+            except discord.HTTPException:
+                pass
+
+        await redirect_post(target_thread, source_thread, progress_callback)
+        logger.info(
+            "Redirect: users from #%s (%s) tagged into #%s (%s)",
+            source_thread.name,
+            source_thread.id,
+            target_thread.name,
+            target_thread.id,
+        )
+
+    except (ValueError, RuntimeError) as exc:
+        await interaction.followup.send(f"**Error:** {exc}")
+    except discord.HTTPException as exc:
+        logger.exception("Discord API error during redirect")
         await interaction.followup.send(
             f"**Discord API error:** {exc.text} (code {exc.code})"
         )

@@ -195,6 +195,25 @@ def _split_message(text: str, limit: int = 2000) -> List[str]:
     return chunks
 
 
+def _collect_new_authors(
+    source_messages: List[discord.Message],
+    target_messages: List[discord.Message],
+) -> List[int]:
+    """Return user IDs from source that aren't already in the target."""
+    existing = set(m.author.id for m in target_messages)
+    existing.update(
+        int(uid) for m in target_messages
+        for uid in re.findall(r"<@!?(\d+)>", m.content or "")
+    )
+    source_authors: dict[int, None] = {}
+    for m in source_messages:
+        if not m.author.bot:
+            source_authors.setdefault(m.author.id, None)
+        for uid in re.findall(r"<@!?(\d+)>", m.content or ""):
+            source_authors.setdefault(int(uid), None)
+    return [uid for uid in source_authors if uid not in existing]
+
+
 async def dry_run_report(
     target: discord.Thread, source: discord.Thread
 ) -> str:
@@ -245,21 +264,8 @@ async def merge_posts(
         await progress_callback(f"Merging {len(messages)} message(s)...")
 
         # 3. Send a header with the source post's title, mentioning only new authors.
-        #    Collect real authors + user IDs mentioned in previous merge headers
-        #    (webhook-replayed messages have bot authors, so we also parse <@id> from content).
         target_messages = await fetch_all_messages(target)
-        existing_authors = set(m.author.id for m in target_messages)
-        existing_authors.update(
-            int(uid) for m in target_messages
-            for uid in re.findall(r"<@!?(\d+)>", m.content or "")
-        )
-        source_authors: dict[int, None] = {}
-        for m in messages:
-            if not m.author.bot:
-                source_authors.setdefault(m.author.id, None)
-            for uid in re.findall(r"<@!?(\d+)>", m.content or ""):
-                source_authors.setdefault(int(uid), None)
-        new_authors = {uid: None for uid in source_authors if uid not in existing_authors}
+        new_authors = _collect_new_authors(messages, target_messages)
         mentions = " ".join(f"<@{uid}>" for uid in new_authors)
         header_embed = discord.Embed(
             description=f"**Merged from: {source.name}**",
@@ -296,3 +302,44 @@ async def merge_posts(
 
     finally:
         _active_merges.discard(source.id)
+
+
+async def redirect_post(
+    target: discord.Thread,
+    source: discord.Thread,
+    progress_callback,
+) -> None:
+    """Tag source authors into the target, mark as duplicate, and delete the source."""
+    # 1. Fetch messages from both threads.
+    source_messages = await fetch_all_messages(source)
+    target_messages = await fetch_all_messages(target)
+
+    await progress_callback("Redirecting...")
+
+    # 2. Send a header tagging new authors.
+    new_authors = _collect_new_authors(source_messages, target_messages)
+    mentions = " ".join(f"<@{uid}>" for uid in new_authors)
+    header_embed = discord.Embed(
+        description=(
+            f"**Redirected from: {source.name}**\n"
+            f"A duplicate post was closed and its participants have been tagged here."
+        ),
+        colour=discord.Colour.orange(),
+    )
+    header_content = mentions if mentions else None
+    await target.send(content=header_content, embed=header_embed)
+
+    # 3. Delete the source thread.
+    try:
+        await source.delete()
+    except discord.Forbidden:
+        logger.warning("Could not delete source thread %s — missing permissions.", source.id)
+        await progress_callback(
+            f"Redirected users from **{source.name}**. "
+            f"**Warning:** I couldn't delete the source post — please remove it manually."
+        )
+        return
+
+    await progress_callback(
+        f"Redirected users from **{source.name}** into this post. Source post deleted."
+    )
