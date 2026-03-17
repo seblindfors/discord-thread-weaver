@@ -11,18 +11,34 @@ A Discord bot that merges forum posts. Messages are replayed using webhooks so t
 - **Attachment support** — images and files are re-uploaded (falls back to links for oversized files)
 - **Author tagging** — original authors are mentioned once so they get added to the target thread
 - **Source title preserved** — a header shows which post was merged in
+- **Redirect duplicates** — `/redirect` closes a duplicate post, tags its users into the target, without replaying messages
 
 ## Usage
+
+### Merge
 
 ```
 /merge target:<link-or-id> source:<link-or-id>
 ```
 
+Replays all messages from the source into the target using webhooks, then deletes the source.
+
 - **target** — the post that stays (optional if run inside a forum post)
 - **source** — the post whose messages get moved, then deleted
 - **dry_run** — set to `True` to preview without making changes
 
-All status messages are ephemeral (only you see them). The replayed messages are visible to everyone.
+### Redirect
+
+```
+/redirect target:<link-or-id> source:<link-or-id>
+```
+
+Closes a duplicate post and tags its participants into the target. No messages are replayed — just a "Redirected from" header with user mentions.
+
+- **target** — the post to redirect users into (optional if run inside a forum post)
+- **source** — the duplicate post (will be deleted)
+
+All status messages are ephemeral (only you see them).
 
 ## Setup
 
