@@ -4,14 +4,12 @@ A Discord bot that merges forum posts. Messages are replayed using webhooks so t
 
 ## Features
 
-- **Slash command** — `/merge` with Discord's built-in command menu
 - **Webhook replay** — merged messages look like the original author posted them
 - **Dry-run mode** — preview a merge before executing it
-- **Auto-detect target** — run `/merge` inside a forum post to use it as the target
+- **Redirect duplicates** — close a duplicate post and tag its users without replaying messages
+- **Auto-detect target** — run commands inside a forum post to use it as the target
 - **Attachment support** — images and files are re-uploaded (falls back to links for oversized files)
-- **Author tagging** — original authors are mentioned once so they get added to the target thread
-- **Source title preserved** — a header shows which post was merged in
-- **Redirect duplicates** — `/redirect` closes a duplicate post, tags its users into the target, without replaying messages
+- **Smart author tagging** — only mentions users not already in the target thread
 
 ## Usage
 
