@@ -1,15 +1,17 @@
 # Thread Weaver
 
-A Discord bot that merges forum posts. Messages are replayed using webhooks so they appear as the original authors, with their name and avatar intact.
+A Discord bot for managing forum posts. Merge, move, or redirect forum threads — messages are replayed using webhooks so they appear as the original authors, with their name and avatar intact.
 
 ## Features
 
-- **Webhook replay** — merged messages look like the original author posted them
-- **Dry-run mode** — preview a merge before executing it
+- **Webhook replay** — merged/moved messages look like the original author posted them
+- **Move posts** — move a forum post to a different forum channel
 - **Redirect duplicates** — close a duplicate post and tag its users without replaying messages
+- **Dry-run mode** — preview a merge before executing it
 - **Auto-detect target** — run commands inside a forum post to use it as the target
 - **Attachment support** — images and files are re-uploaded (falls back to links for oversized files)
 - **Smart author tagging** — only mentions users not already in the target thread
+- **Tag copying** — forum tags are carried over when moving between channels (where matching tags exist)
 
 ## Usage
 
@@ -35,6 +37,17 @@ Closes a duplicate post and tags its participants into the target. No messages a
 
 - **target** — the post to redirect users into (optional if run inside a forum post)
 - **source** — the duplicate post (will be deleted)
+
+### Move
+
+```
+/move post:<link-or-id> to:<forum-channel>
+```
+
+Moves a forum post to a different forum channel. Creates a new thread, replays all messages via webhook, copies matching tags, and deletes the original.
+
+- **post** — the forum post to move (optional if run inside a forum post)
+- **to** — destination forum channel (autocomplete in Discord)
 
 All status messages are ephemeral (only you see them).
 
@@ -89,5 +102,4 @@ The invoking user must have **Manage Threads** permission. You can further restr
 ## Future considerations
 
 - **Undo support** — keep a log of merged posts so an `/unmerge` command could recreate the source
-- **Cross-channel merge** — merge posts from different forum channels
 - **Selective merge** — choose specific messages to move instead of all

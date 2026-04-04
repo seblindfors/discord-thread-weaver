@@ -343,3 +343,98 @@ async def redirect_post(
     await progress_callback(
         f"Redirected users from **{source.name}** into this post. Source post deleted."
     )
+
+
+async def move_post(
+    source: discord.Thread,
+    destination: discord.ForumChannel,
+    webhook: Webhook,
+    progress_callback,
+) -> discord.Thread:
+    """Move a forum post to a different forum channel.
+
+    Creates a new thread in the destination, replays all messages, then deletes the original.
+    Returns the new thread.
+    """
+    if source.id in _active_merges:
+        raise RuntimeError("An operation is already running for this post.")
+
+    if not isinstance(source.parent, (discord.ForumChannel, discord.channel.ForumChannel)):
+        raise ValueError(f"**{source.name}** is not a forum post.")
+
+    _active_merges.add(source.id)
+    try:
+        # 1. Lock the source thread.
+        try:
+            await source.edit(locked=True)
+        except discord.Forbidden:
+            raise RuntimeError(
+                "I don't have permission to lock the source thread. "
+                "I need the **Manage Threads** permission."
+            )
+
+        # 2. Fetch source messages.
+        messages = await fetch_all_messages(source)
+        if not messages:
+            raise ValueError("Source post has no messages to move.")
+
+        await progress_callback(f"Moving {len(messages)} message(s) to **#{destination.name}**...")
+
+        # 3. Copy forum tags that exist in both channels.
+        dest_tag_names = {tag.name.lower(): tag for tag in destination.available_tags}
+        applied_tags = []
+        if hasattr(source, "applied_tags"):
+            for tag in source.applied_tags:
+                dest_tag = dest_tag_names.get(tag.name.lower())
+                if dest_tag:
+                    applied_tags.append(dest_tag)
+
+        # 4. Create the new thread with a header and author mentions as the starter.
+        author_ids: dict[int, None] = {}
+        for m in messages:
+            if not m.author.bot:
+                author_ids.setdefault(m.author.id, None)
+            for uid in re.findall(r"<@!?(\d+)>", m.content or ""):
+                author_ids.setdefault(int(uid), None)
+        mentions = " ".join(f"<@{uid}>" for uid in author_ids) if author_ids else ""
+
+        starter_embed = discord.Embed(
+            description=f"**Moved from: #{source.parent.name}**",
+            colour=discord.Colour.green(),
+        )
+        new_thread_result = await destination.create_thread(
+            name=source.name,
+            content=mentions or "\u200b",
+            embed=starter_embed,
+            applied_tags=applied_tags[:5],  # Discord allows max 5 tags
+        )
+        new_thread = new_thread_result.thread
+
+        # 5. Replay all messages via webhook.
+        for i, msg in enumerate(messages, 1):
+            await replay_message(webhook, new_thread, msg)
+            if i % 10 == 0:
+                await progress_callback(
+                    f"Moving... {i}/{len(messages)} messages replayed."
+                )
+
+        # 6. Delete the source thread.
+        try:
+            await source.delete()
+        except discord.Forbidden:
+            logger.warning("Could not delete source thread %s — missing permissions.", source.id)
+            await progress_callback(
+                f"Moved **{source.name}** to **#{destination.name}** "
+                f"({len(messages)} messages). "
+                f"**Warning:** I couldn't delete the original post — please remove it manually."
+            )
+            return new_thread
+
+        await progress_callback(
+            f"Moved **{source.name}** to **#{destination.name}** "
+            f"({len(messages)} messages). Original post deleted."
+        )
+        return new_thread
+
+    finally:
+        _active_merges.discard(source.id)

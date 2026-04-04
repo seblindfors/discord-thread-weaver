@@ -12,6 +12,7 @@ from merge import (
     dry_run_report,
     get_or_create_webhook,
     merge_posts,
+    move_post,
     parse_thread_ref,
     redirect_post,
     validate_threads,
@@ -262,6 +263,114 @@ async def redirect_command(
         await interaction.followup.send(f"**Error:** {exc}")
     except discord.HTTPException as exc:
         logger.exception("Discord API error during redirect")
+        await interaction.followup.send(
+            f"**Discord API error:** {exc.text} (code {exc.code})"
+        )
+
+
+@client.tree.command(name="move", description="Move a forum post to a different forum channel")
+@app_commands.describe(
+    post="Forum post to move — link or ID (omit to use current thread)",
+    to="Destination forum channel",
+)
+async def move_command(
+    interaction: discord.Interaction,
+    to: discord.ForumChannel,
+    post: Optional[str] = None,
+):
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "This command can only be used in a server.", ephemeral=True
+        )
+        return
+
+    if not interaction.permissions.manage_threads:
+        await interaction.response.send_message(
+            "You need the **Manage Threads** permission to use this command.",
+            ephemeral=True,
+        )
+        return
+
+    bot_perms = interaction.app_permissions
+    missing = []
+    if not bot_perms.manage_threads:
+        missing.append("Manage Threads")
+    if not bot_perms.send_messages:
+        missing.append("Send Messages")
+    if not bot_perms.read_message_history:
+        missing.append("Read Message History")
+    if not bot_perms.attach_files:
+        missing.append("Attach Files")
+    if not bot_perms.manage_webhooks:
+        missing.append("Manage Webhooks")
+    if missing:
+        await interaction.response.send_message(
+            f"I'm missing permissions: **{', '.join(missing)}**. "
+            "Please fix my role and try again.",
+            ephemeral=True,
+        )
+        return
+
+    # Resolve the post: explicit argument or auto-detect current thread.
+    try:
+        if post is not None:
+            post_id = parse_thread_ref(post)
+        else:
+            if isinstance(
+                getattr(interaction.channel, "parent", None), discord.ForumChannel
+            ):
+                post_id = interaction.channel.id
+            else:
+                await interaction.response.send_message(
+                    "When omitting `post`, run this command inside a forum post.\n"
+                    "Or provide: `/move post:<link> to:<channel>`",
+                    ephemeral=True,
+                )
+                return
+    except ValueError as exc:
+        await interaction.response.send_message(
+            f"**Error:** {exc}", ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        source_thread = (
+            interaction.guild.get_thread(post_id)
+            or await interaction.guild.fetch_channel(post_id)
+        )
+
+        if source_thread.parent and source_thread.parent.id == to.id:
+            await interaction.followup.send(
+                "**Error:** The post is already in that forum channel."
+            )
+            return
+
+        webhook = await get_or_create_webhook(to, client.user)
+
+        async def progress_callback(text: str):
+            try:
+                await interaction.edit_original_response(content=text)
+            except discord.HTTPException:
+                pass
+
+        new_thread = await move_post(
+            source_thread, to, webhook, progress_callback
+        )
+        logger.info(
+            "Move complete: #%s (%s) moved to #%s",
+            source_thread.name,
+            source_thread.id,
+            to.name,
+        )
+
+    except (ValueError, RuntimeError) as exc:
+        await interaction.followup.send(f"**Error:** {exc}")
+    except discord.NotFound:
+        await interaction.followup.send("**Error:** Could not find that forum post.")
+    except discord.HTTPException as exc:
+        logger.exception("Discord API error during move")
         await interaction.followup.send(
             f"**Discord API error:** {exc.text} (code {exc.code})"
         )
